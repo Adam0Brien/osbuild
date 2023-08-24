@@ -8,6 +8,8 @@ Host commands used: mount
 """
 
 import sys
+import subprocess
+import json
 from typing import Dict
 
 from osbuild import mounts
@@ -43,17 +45,31 @@ SCHEMA_2 = """
 }
 """
 
-
 class XfsMount(mounts.FileSystemMountService):
 
-    def translate_options(self, options: Dict):
-        return ["-t", "xfs"] + super().translate_options(options)
+    def check_uuid_conflict(self, source: str) -> bool:
+        # Use 'blkid' command to get UUID information of the source device
+        try:
+            result = subprocess.run(["blkid", "-o", "export", source], capture_output=True, text=True)
+            blkid_info = dict(line.split("=") for line in result.stdout.strip().split("\n"))
+            source_uuid = blkid_info.get("UUID")
+            if source_uuid:
+                # Use 'blkid' command to list all UUIDs present on the host system
+                result = subprocess.run(["blkid", "-o", "export"], capture_output=True, text=True)
+                all_uuids = {line.split("=")[1] for line in result.stdout.strip().split("\n") if line.startswith("UUID=")}
+                return source_uuid in all_uuids
+        except Exception as e:
+            print(f"Error checking UUID conflict: {e}")
+        return False
 
+    def translate_options(self, options: Dict):
+        if self.check_uuid_conflict(options["source"]):
+            print("Warning: The UUID of the source filesystem already exists on the host.")
+        return ["-t", "xfs"] + super().translate_options(options)
 
 def main():
     service = XfsMount.from_args(sys.argv[1:])
     service.main()
-
 
 if __name__ == '__main__':
     main()
